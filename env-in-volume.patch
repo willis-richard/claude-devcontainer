@@ -1,0 +1,381 @@
+diff --git a/.devcontainer/Dockerfile b/.devcontainer/Dockerfile
+index 8644365..dc48130 100644
+--- a/.devcontainer/Dockerfile
++++ b/.devcontainer/Dockerfile
+@@ -1,4 +1,5 @@
+-# Claude Code dev container: one Dockerfile for the laptop (CPU build) and the GPU server (CUDA build).
++# Claude Code dev container: one image for the laptop and the GPU server. The project's conda
++# env is not in it: post-start.sh builds it into a volume (CPU or CUDA builds, set by up.sh).
+ # The build context is the root of YOUR clone (up.sh passes --config from it), so the image only
+ # contains files you have reviewed. Dockerfile.dockerignore limits what the context passes.
+ FROM node:20
+@@ -63,33 +64,16 @@ ENV SHELL=/bin/bash
+ ENV EDITOR=vim
+ ENV VISUAL=vim
+ 
+-# Miniforge + the project's env, always named `dev`, baked into the image.
+-# The env's bin is first on PATH, so `python` is the env's python without `conda activate`.
++# Miniforge only. The project's env, always named `dev`, lives in a volume on envs/, and
++# conda's package cache in another on pkgs/; the dirs exist here so the volumes are owned by
++# node. The env's bin is first on PATH, so `python` is the env's python without activation.
+ RUN curl -fsSL "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-$(uname -m).sh" -o /tmp/mf.sh \
+-  && bash /tmp/mf.sh -b -p $HOME/miniforge3 && rm /tmp/mf.sh
+-
+-# CPU or CUDA: the build cannot see a GPU, so conda-forge offers only CPU builds unless
+-# CONDA_OVERRIDE_CUDA is set. Build arg CUDA_VERSION sets it: empty (the laptop) = CPU builds;
+-# up.sh sets it on a GPU host to the driver's CUDA version, and the solver then prefers CUDA
+-# builds of unpinned packages such as `pytorch`.
+-# The cache mount keeps conda's package downloads between builds (outside the image), so a
+-# change to environment.yml only downloads what is new.
+-ARG CUDA_VERSION=""
+-COPY --chown=node:node environment.yml /tmp/environment.yml
+-RUN --mount=type=cache,target=/home/node/miniforge3/pkgs,uid=1000,gid=1000 \
+-  CONDA_OVERRIDE_CUDA="${CUDA_VERSION}" \
+-  $HOME/miniforge3/bin/conda env create -n dev -f /tmp/environment.yml \
+-  && rm /tmp/environment.yml
+-# A GPU build that still got CPU PyTorch fails here rather than in a full-size run.
+-RUN if [ -n "$CUDA_VERSION" ] && $HOME/miniforge3/bin/conda list -n dev --json \
+-      | jq -e '.[] | select(.name == "pytorch" and (.build_string | test("cpu")))' >/dev/null; then \
+-    echo "ERROR: CPU build of pytorch in a CUDA build; check environment.yml" >&2; exit 1; fi
+-# Which build this is, for the GPU check in post-start.sh. Empty = CPU.
+-ENV IMAGE_CUDA_VERSION=$CUDA_VERSION
++  && bash /tmp/mf.sh -b -p $HOME/miniforge3 && rm /tmp/mf.sh \
++  && mkdir -p $HOME/miniforge3/envs $HOME/miniforge3/pkgs
+ ENV PATH=/home/node/miniforge3/envs/dev/bin:/home/node/miniforge3/bin:$PATH
+ 
+-# Claude Code after the env, so updating it does not rebuild the env. up.sh passes the current
+-# release as the version; a literal "latest" would be cached forever.
++# up.sh passes the current Claude Code release as the version; a literal "latest" would be
++# cached forever.
+ ARG CLAUDE_CODE_VERSION=latest
+ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+ 
+diff --git a/.devcontainer/Dockerfile.dockerignore b/.devcontainer/Dockerfile.dockerignore
+index ee6e494..5f0a14d 100644
+--- a/.devcontainer/Dockerfile.dockerignore
++++ b/.devcontainer/Dockerfile.dockerignore
+@@ -2,6 +2,5 @@
+ # .dockerignore at the context root. Patterns are relative to the context: the project root.
+ # Pass only what the Dockerfile copies, never .git, outputs/ or data.
+ *
+-!environment.yml
+ !.devcontainer-domains
+ !.devcontainer/
+diff --git a/.devcontainer/README.md b/.devcontainer/README.md
+index 6d7433f..8eaacd8 100644
+--- a/.devcontainer/README.md
++++ b/.devcontainer/README.md
+@@ -1,7 +1,7 @@
+ # Claude Code dev container
+ 
+ A sandboxed container for working on a repo with Claude Code: prototype on a laptop (CPU), run
+-full size on a GPU server (CUDA). One Dockerfile; `up.sh` picks the build.
++full size on a GPU server (CUDA). One image; `up.sh` picks CPU or CUDA builds for the env.
+ 
+ Placeholders below:
+ - `<repo>`: the name you give the project's repository, e.g. `coding_practice`. It is also the
+@@ -40,7 +40,7 @@ GPU server the `git fetch origin` in `claude/server.md` does not apply. To remov
+ ### 3. Describe the project
+ Fill in `environment.yml` (packages), `.devcontainer-domains` (extra hosts the container may
+ reach), `CLAUDE.md` ("The project") and `README.md`. Commit and push. Leave `pytorch` unpinned
+-(not `pytorch-gpu` or `pytorch-cpu`): the build picks the variant.
++(not `pytorch-gpu` or `pytorch-cpu`): the machine picks the variant.
+ 
+ ### 4. Secrets and data
+ For a private repo, make a GitHub token so Claude can fetch from it (read only): GitHub >
+@@ -71,39 +71,47 @@ After `environment.yml` changes: `conda env update -n <pkg> -f environment.yml -
+ ~/repo/<repo>/.devcontainer/up.sh      # builds or starts the container, opens bash in it
+ claude --dangerously-skip-permissions  # inside
+ ```
+-The first build takes 15-30 min (mostly the conda env). The first time, Claude prints a login
+-URL: open it in your browser and paste the code back.
++The first start takes 15-30 min: the image build, then the conda env, which is built into a
++volume once per agent and machine. A new project reuses the cached image layers, so only its
++env build is slow. The first time, Claude prints a login URL: open it in your browser and paste
++the code back.
+ 
+ ### 7. Review and merge Claude's work
+ In your clone: `git fetch agent`, then read the diff before checking anything out (magit:
+ `d r` with `main..agent/main`). Look hardest at `environment.yml`, `.devcontainer-domains`,
+-`.devcontainer/`, `.dir-locals.el` and `conftest.py`: they change the next build or run on
+-your side. Then merge or check out, and push.
++`.devcontainer/`, `.dir-locals.el` and `conftest.py`: they change the next build, your host
++env or what runs on your side. Then merge or check out, and push.
+ 
+ ## Day to day
+ - `up.sh` again: another shell in the same container. Your work in it survives a restart;
+-  `up.sh --rebuild` (after a change to `.devcontainer/`, `environment.yml` or
+-  `.devcontainer-domains`) starts a fresh container from a new image.
+-- Commit kit and env changes in your clone, then `up.sh --rebuild`. On the server, push from
+-  the laptop and `git pull` first.
++  `up.sh --rebuild` (after a change to `.devcontainer/` or `.devcontainer-domains`) starts a
++  fresh container from a new image. The conda env is in a volume and survives both.
++- Commit kit changes in your clone, then `up.sh --rebuild`. On the server, push from the
++  laptop and `git pull` first.
+ - Another host: add it to `.devcontainer-domains`. A new dependency: add it to
+-  `environment.yml`; Claude can `conda env update -n dev -f environment.yml` in the running
+-  container meanwhile, and rebuilds only download what is new.
++  `environment.yml` and run `conda env update -n dev -f environment.yml --prune` in the
++  container (Claude may). A start does it anyway when the file changed since the last build.
++- A broken or suspect env: `up.sh --reset-env` deletes the agent's env volume; the start
++  rebuilds it (package downloads are cached).
+ - A kit fix made in one project does not reach the others or the template: copy it over.
+ 
+ ### More than one agent
+ `up.sh agent-2` gives a second agent its own clone, container and remote `agent-2`, so two
+ agents can work on different jobs without touching each other's files. Agents of one repo
+-share its image, secrets, `/data`, Claude login and HF cache. Keep their branches distinct.
++share its image, secrets, `/data`, Claude login, HF cache and conda package cache; each has
++its own env. Keep their branches distinct.
+ 
+ ### Removing a project
+ ```bash
+ c=$(docker ps -aq --filter label=devcontainer.local_folder=$HOME/workspaces/<repo>/agent)
+ img=$(docker inspect -f '{{.Image}}' $c); docker rm -f $c; docker image rm $img
+-docker volume rm claude-dev-config-<repo> claude-dev-history-<repo> claude-dev-hf-<repo>
++docker volume rm claude-dev-config-<repo> claude-dev-history-<repo> claude-dev-hf-<repo> \
++  claude-dev-pkgs-<repo> claude-dev-env-<repo>-agent
+ rm -rf ~/workspaces/<repo> ~/repo/<repo> ~/data/<repo> ~/.config/claude-dev/repos/<repo>
+ ```
+-Repeat the first two lines for each extra agent (`.../<repo>/agent-2`).
++Repeat the first two lines and the env volume for each extra agent (`.../<repo>/agent-2`,
++`claude-dev-env-<repo>-agent-2`). Projects can share an image: `docker image rm` then refuses,
++which is harmless.
+ 
+ ## GPU server
+ Needs an NVIDIA driver and Docker with GPU access (NVIDIA Container Toolkit), e.g. an AWS Deep
+@@ -116,7 +124,7 @@ git clone --config credential.helper='!f() { test "$1" = get && echo username=x-
+ Copy the secrets to `~/.config/claude-dev/` and inputs to `~/data/<repo>/`. Every session:
+ ```bash
+ git -C ~/repo/<repo> pull              # what you pushed from the laptop
+-~/repo/<repo>/.devcontainer/up.sh      # add --rebuild if the kit or env changed
++~/repo/<repo>/.devcontainer/up.sh      # add --rebuild if the kit changed
+ ```
+ Inside, run `tmux new -A -s main` first and start Claude (and your own experiments) in it, so
+ they survive an SSH drop. On a cloud instance, attach no IAM role: the firewall blocks the
+@@ -148,16 +156,21 @@ plant (config via `.git/commondir`, `.dir-locals.el`, `conftest.py`). Fetching r
+   `.devcontainer-domains` (each with its subdomains); no IPv6. DNS goes through a local
+   resolver that answers only for those, so DNS cannot carry data out, and allowed addresses
+   follow DNS, so CDNs that rotate IPs keep working.
+-- The project's conda env (always named `dev`), built from `environment.yml` into the image
+-  and on PATH. The project is installed editable (`--no-deps`) at every start.
+-- CPU builds of conda packages on the laptop. On a host with an NVIDIA GPU, `up.sh` sets the
+-  build arg `CUDA_VERSION` to the driver's CUDA version, giving CUDA builds plus GPU
+-  passthrough. At every start the container checks its build matches the GPU it can see.
++- The project's conda env (always named `dev`), on PATH, in a volume per agent. At every
++  start it is built from the agent's `environment.yml` if that changed since the last build
++  (a hash in the volume), so dependency changes need no rebuild. This env follows the
++  agent's file unreviewed: it only ever runs in the container, and the agent could install
++  packages anyway. Your host env (step 5) comes from your reviewed file. The project is
++  installed editable (`--no-deps`) at every start.
++- CPU builds of conda packages on the laptop. On a host with an NVIDIA GPU, `up.sh` sets
++  `CONDA_OVERRIDE_CUDA` in the container to the driver's CUDA version, giving CUDA builds
++  plus GPU passthrough. At every start the container checks this matches the GPU it can see.
+ - Secrets mounted read-only: a GitHub token per repo, the HF token and W&B key shared.
+ - Per-machine instructions for Claude: `CLAUDE.local.md` in Claude's clone imports
+   `claude/local.md` or `claude/server.md`.
+-- Persistent volumes for Claude's config (so its login), shell history and the HF cache, one
+-  set per repo, shared by that repo's agents.
++- Persistent volumes for Claude's config (so its login), shell history, the HF cache and
++  conda's package cache, one set per repo, shared by that repo's agents; and one per agent
++  for its conda env.
+ 
+ What the firewall does not stop: allowed hosts accept anyone's credentials, so a
+ prompt-injected agent could upload to GitHub, Anthropic, Hugging Face or W&B with an
+diff --git a/.devcontainer/claude/container.md b/.devcontainer/claude/container.md
+index 30e114a..690b4dc 100644
+--- a/.devcontainer/claude/container.md
++++ b/.devcontainer/claude/container.md
+@@ -17,11 +17,11 @@ You run inside a Docker container. It runs on my laptop (CPU build) and on a GPU
+ - Paths to data, models and outputs come from config, never hard-coded.
+ 
+ ## Python
+-- Conda env `dev`, built from environment.yml into the image and first on PATH (no
+-  activation needed).
++- Conda env `dev`, first on PATH (no activation needed). It lives in a persistent volume,
++  built from environment.yml; each container start re-applies the file if it changed.
+ - Every dependency goes in environment.yml (conda-forge; pip only for packages not on
+   conda-forge), none in pyproject.toml. After editing it, run
+-  `conda env update -n dev -f environment.yml`; the next image rebuild bakes it in.
++  `conda env update -n dev -f environment.yml --prune`.
+ - The project is installed editable at container start; never add `-e .` to environment.yml.
+ 
+ ## The container itself
+diff --git a/.devcontainer/devcontainer.json b/.devcontainer/devcontainer.json
+index 9a28f6b..38cb241 100644
+--- a/.devcontainer/devcontainer.json
++++ b/.devcontainer/devcontainer.json
+@@ -6,7 +6,6 @@
+     "args": {
+       "TZ": "${localEnv:TZ:Europe/London}",
+       "CLAUDE_CODE_VERSION": "${localEnv:CLAUDE_CODE_VERSION:latest}",
+-      "CUDA_VERSION": "${localEnv:CLAUDE_DEV_CUDA}",
+       "GIT_DELTA_VERSION": "0.18.2"
+     }
+   },
+@@ -22,6 +21,8 @@
+     "source=claude-dev-history-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/commandhistory,type=volume",
+     "source=claude-dev-config-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/home/node/.claude,type=volume",
+     "source=claude-dev-hf-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/home/node/.cache/huggingface,type=volume",
++    "source=claude-dev-env-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh}-${localEnv:CLAUDE_DEV_NAME:UNSET-use-up.sh},target=/home/node/miniforge3/envs,type=volume",
++    "source=claude-dev-pkgs-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/home/node/miniforge3/pkgs,type=volume",
+     "source=${localEnv:HOME}/data/${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/data,type=bind,readonly",
+     "source=${localEnv:HOME}/.config/claude-dev/shared,target=/run/secrets/shared,type=bind,readonly",
+     "source=${localEnv:HOME}/.config/claude-dev/repos/${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/run/secrets/repo,type=bind,readonly"
+@@ -30,6 +31,7 @@
+     "NODE_OPTIONS": "--max-old-space-size=4096",
+     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
++    "CONDA_OVERRIDE_CUDA": "${localEnv:CLAUDE_DEV_CUDA}",
+     "HF_TOKEN_PATH": "/run/secrets/shared/hf-token",
+     "NETRC": "/run/secrets/shared/netrc",
+     "GIT_AUTHOR_NAME": "Claude (agent)",
+diff --git a/.devcontainer/post-start.sh b/.devcontainer/post-start.sh
+index 838ef33..8c0351e 100644
+--- a/.devcontainer/post-start.sh
++++ b/.devcontainer/post-start.sh
+@@ -4,23 +4,52 @@
+ set -euo pipefail
+ sudo /usr/local/bin/init-firewall.sh
+ 
+-# Editable install of the project. Not in environment.yml: the image build sees only that file.
+-# --no-deps: environment.yml owns the dependencies. --no-build-isolation: the build backend
+-# (setuptools) comes from the env, so this needs no download.
+-if [ -f pyproject.toml ] || [ -f setup.py ]; then
+-  pip install --quiet --no-deps --no-build-isolation -e . \
+-    || echo "WARNING: editable install of the project failed" >&2
+-fi
+-
+-# The image's build (CPU or CUDA) must match the GPU this container can see.
++# CONDA_OVERRIDE_CUDA (from up.sh via devcontainer.json) must match the GPU this container
++# can see: it decides whether the env gets CPU or CUDA builds.
++cuda=${CONDA_OVERRIDE_CUDA:-}
+ if nvidia-smi -L >/dev/null 2>&1; then gpu=yes; else gpu=no; fi
+-if [ -n "${IMAGE_CUDA_VERSION:-}" ] && [ $gpu = no ]; then
+-  echo "ERROR: CUDA image (CUDA $IMAGE_CUDA_VERSION) but no GPU in this container." >&2
++if [ -n "$cuda" ] && [ $gpu = no ]; then
++  echo "ERROR: CUDA container (CUDA $cuda) but no GPU in this container." >&2
+   echo "       Run nvidia-smi on the host; if it works there, run up.sh --rebuild." >&2
+   exit 1
+ fi
+-if [ -z "${IMAGE_CUDA_VERSION:-}" ] && [ $gpu = yes ]; then
+-  echo "ERROR: GPU visible but this is a CPU image. Run up.sh --rebuild." >&2
++if [ -z "$cuda" ] && [ $gpu = yes ]; then
++  echo "ERROR: GPU visible but this is a CPU container. Run up.sh --rebuild." >&2
+   exit 1
+ fi
+-echo "Image: ${IMAGE_CUDA_VERSION:+CUDA }${IMAGE_CUDA_VERSION:-CPU}, GPU visible: $gpu"
++
++# The env `dev` lives in a volume, so it survives rebuilds. Build it only when environment.yml
++# or the CUDA target differs from the last successful build, recorded in the stamp.
++envdir=$HOME/miniforge3/envs/dev
++stamp=$HOME/miniforge3/envs/.dev-stamp
++if [ -f environment.yml ]; then
++  want="$(sha256sum < environment.yml | cut -d' ' -f1) cuda=$cuda"
++  have=$(cat "$stamp" 2>/dev/null || true)
++  if [ "$have" != "$want" ]; then
++    # A new CUDA target (or no stamp: a failed first build) needs a fresh env: an update
++    # would keep the old CPU or CUDA builds.
++    if [ -d "$envdir" ] && [ "${have#* }" != "cuda=$cuda" ]; then rm -rf "$envdir"; fi
++    if [ -d "$envdir" ]; then op=(update --prune); else op=(create); fi
++    echo "environment.yml changed: conda env ${op[*]} -n dev"
++    if conda env "${op[@]}" -n dev -f environment.yml; then
++      echo "$want" > "$stamp"
++    else
++      echo "WARNING: building env dev failed; fix environment.yml and restart" >&2
++    fi
++    if [ -n "$cuda" ] && conda list -n dev --json 2>/dev/null \
++        | jq -e '.[] | select(.name == "pytorch" and (.build_string | test("cpu")))' >/dev/null; then
++      echo "ERROR: CPU build of pytorch in a CUDA container; check environment.yml" >&2
++    fi
++  fi
++else
++  echo "WARNING: no environment.yml: env dev not built" >&2
++fi
++
++# Editable install of the project. Not in environment.yml: it needs the project's source.
++# --no-deps: environment.yml owns the dependencies. --no-build-isolation: the build backend
++# (setuptools) comes from the env, so this needs no download.
++if [ -d "$envdir" ] && { [ -f pyproject.toml ] || [ -f setup.py ]; }; then
++  pip install --quiet --no-deps --no-build-isolation -e . \
++    || echo "WARNING: editable install of the project failed" >&2
++fi
++echo "Env: ${cuda:+CUDA }${cuda:-CPU}, GPU visible: $gpu"
+diff --git a/.devcontainer/up.sh b/.devcontainer/up.sh
+index 8f45863..91f75ca 100644
+--- a/.devcontainer/up.sh
++++ b/.devcontainer/up.sh
+@@ -4,14 +4,18 @@
+ #
+ #   ~/repo/<repo>/.devcontainer/up.sh                    # agent "agent": start, or another shell
+ #   ~/repo/<repo>/.devcontainer/up.sh agent-2            # a second agent, own clone and container
+-#   ~/repo/<repo>/.devcontainer/up.sh --rebuild [name]   # after a change to the kit,
+-#                                                        # environment.yml or .devcontainer-domains
++#   ~/repo/<repo>/.devcontainer/up.sh --rebuild [name]   # after a change to the kit or
++#                                                        # .devcontainer-domains
++#   ~/repo/<repo>/.devcontainer/up.sh --reset-env [name] # rebuild the agent's conda env from scratch
++#
++# The conda env lives in a volume and is built at container start when environment.yml changes
++# (post-start.sh), so a dependency change needs no rebuild.
+ #
+ # The image is built from your clone. Each agent works in its own clone,
+ # ~/workspaces/<repo>/<name>, made here on its first run; your clone fetches it as remote <name>.
+ # On the host, only ever fetch from those clones (see README.md).
+ #
+-# On a host with an NVIDIA GPU the image gets CUDA builds of conda packages. Override with
++# On a host with an NVIDIA GPU the env gets CUDA builds of conda packages. Override with
+ # CLAUDE_DEV_CUDA=<version>, or CLAUDE_DEV_CUDA= (empty) for a CPU build.
+ set -euo pipefail
+ KIT=$(cd "$(dirname "$0")" && pwd)
+@@ -19,18 +23,20 @@ ROOT=$(dirname "$KIT")
+ REPO=$(basename "$ROOT")
+ NAME=agent
+ UP_ARGS=()
++RESET_ENV=no
+ for arg in "$@"; do
+   case $arg in
+     --rebuild) UP_ARGS=(--remove-existing-container) ;;
+-    -*) echo "Usage: up.sh [--rebuild] [name]" >&2; exit 1 ;;
++    --reset-env) RESET_ENV=yes ;;
++    -*) echo "Usage: up.sh [--rebuild] [--reset-env] [name]" >&2; exit 1 ;;
+     *) NAME=$arg ;;
+   esac
+ done
+ [[ $NAME =~ ^[A-Za-z0-9_-]+$ ]] || { echo "ERROR: bad agent name: $NAME" >&2; exit 1; }
+ WS=$HOME/workspaces/$REPO/$NAME
+ SECRETS=$HOME/.config/claude-dev
+-# devcontainer.json keys mounts and volumes on this, not on the workspace folder's name.
+-export CLAUDE_DEV_REPO=$REPO
++# devcontainer.json keys mounts and volumes on these, not on the workspace folder's name.
++export CLAUDE_DEV_REPO=$REPO CLAUDE_DEV_NAME=$NAME
+ 
+ for f in environment.yml .devcontainer-domains; do
+   [ -f "$ROOT/$f" ] || { echo "ERROR: $ROOT has no $f" >&2; exit 1; }
+@@ -76,6 +82,14 @@ if [ -n "${CLAUDE_DEV_CUDA:-}" ]; then echo "CUDA build ($CLAUDE_DEV_CUDA)"; els
+ CLAUDE_CODE_VERSION=$(npm view @anthropic-ai/claude-code version 2>/dev/null || echo latest)
+ export CLAUDE_CODE_VERSION
+ 
++# The env volume is in use while the container exists, so remove the container first.
++if [ $RESET_ENV = yes ]; then
++  c=$(docker ps -aq --filter "label=devcontainer.local_folder=$WS")
++  [ -z "$c" ] || docker rm -f $c >/dev/null
++  docker volume rm "claude-dev-env-$REPO-$NAME" >/dev/null 2>&1 || true
++  echo "Removed env volume claude-dev-env-$REPO-$NAME: the start rebuilds the env"
++fi
++
+ DC=(--workspace-folder "$WS" --config "$KIT/devcontainer.json")
+ devcontainer up "${DC[@]}" "${UP_ARGS[@]}"
+ exec devcontainer exec "${DC[@]}" bash
+diff --git a/README.md b/README.md
+index a90e4a4..ab4a594 100644
+--- a/README.md
++++ b/README.md
+@@ -13,6 +13,6 @@ Every session, where `<repo>` is this repository's name (the folder `~/repo/<rep
+ ~/repo/<repo>/.devcontainer/up.sh            # build or start the container, open bash in it
+ claude --dangerously-skip-permissions        # inside
+ ```
+-`up.sh --rebuild` after a change to `.devcontainer/`, `environment.yml` or
+-`.devcontainer-domains`. Get Claude's work with `git fetch agent` in your clone, and review it
++`up.sh --rebuild` after a change to `.devcontainer/` or `.devcontainer-domains`; an
++`environment.yml` change applies at the next start. Get Claude's work with `git fetch agent` in your clone, and review it
+ as in [step 7](.devcontainer/README.md#7-review-and-merge-claudes-work).

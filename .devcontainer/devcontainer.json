@@ -1,0 +1,51 @@
+{
+  "name": "Claude Code Sandbox",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "TZ": "${localEnv:TZ:Europe/London}",
+      "CLAUDE_CODE_VERSION": "${localEnv:CLAUDE_CODE_VERSION:latest}",
+      "GIT_DELTA_VERSION": "0.18.2"
+    }
+  },
+  "hostRequirements": {
+    "gpu": "optional"
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW"
+  ],
+  "remoteUser": "node",
+  "mounts": [
+    "source=claude-dev-history-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/commandhistory,type=volume",
+    "source=claude-dev-config-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/home/node/.claude,type=volume",
+    "source=claude-dev-hf-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/home/node/.cache/huggingface,type=volume",
+    "source=claude-dev-env-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh}-${localEnv:CLAUDE_DEV_NAME:UNSET-use-up.sh},target=/home/node/miniforge3/envs,type=volume",
+    "source=claude-dev-pkgs-${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/home/node/miniforge3/pkgs,type=volume",
+    "source=${localEnv:HOME}/data/${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/data,type=bind,readonly",
+    "source=${localEnv:HOME}/.config/claude-dev/shared,target=/run/secrets/shared,type=bind,readonly",
+    "source=${localEnv:HOME}/.config/claude-dev/repos/${localEnv:CLAUDE_DEV_REPO:UNSET-use-up.sh},target=/run/secrets/repo,type=bind,readonly"
+  ],
+  "containerEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "CONDA_OVERRIDE_CUDA": "${localEnv:CLAUDE_DEV_CUDA}",
+    "HF_TOKEN_PATH": "/run/secrets/shared/hf-token",
+    "NETRC": "/run/secrets/shared/netrc",
+    "GIT_AUTHOR_NAME": "Claude (agent)",
+    "GIT_AUTHOR_EMAIL": "24585670+willis-richard@users.noreply.github.com",
+    "GIT_COMMITTER_NAME": "Claude (agent)",
+    "GIT_COMMITTER_EMAIL": "24585670+willis-richard@users.noreply.github.com",
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+    "GIT_CONFIG_VALUE_0": "!f() { test \"$1\" = get && echo username=x-access-token && echo password=$(cat /run/secrets/repo/gh-token); }; f",
+    "GIT_CONFIG_KEY_1": "branch.autoSetupMerge",
+    "GIT_CONFIG_VALUE_1": "false"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "postStartCommand": "/usr/local/bin/post-start.sh",
+  "waitFor": "postStartCommand"
+}

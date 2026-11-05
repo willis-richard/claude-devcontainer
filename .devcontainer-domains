@@ -1,0 +1,11 @@
+# Extra hosts the container may reach, one per line. Each entry also allows its subdomains.
+# Read at image build: a change takes effect on the next rebuild (up.sh --rebuild).
+
+# Hugging Face: hub, and the LFS/Xet CDNs (*.hf.co)
+# huggingface.co
+# hf.co
+
+# Weights & Biases
+# api.wandb.ai
+
+# arxiv.org

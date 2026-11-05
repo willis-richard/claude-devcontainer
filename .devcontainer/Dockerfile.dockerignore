@@ -1,0 +1,6 @@
+# Applies to builds of the Dockerfile next to it (BuildKit) and takes precedence over a
+# .dockerignore at the context root. Patterns are relative to the context: the project root.
+# Pass only what the Dockerfile copies, never .git, outputs/ or data.
+*
+!.devcontainer-domains
+!.devcontainer/

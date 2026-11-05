@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myproject"
+version = "0.1.0"
+# No dependencies or Python version here: environment.yml owns them.
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.isort]
+profile = "google"
+line_length = 100
+src_paths = ["src", "tests"]
+skip_gitignore = true
+
+[tool.yapf]
+based_on_style = "google"
+column_limit = 100
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+typeCheckingMode = "basic"
