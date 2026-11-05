@@ -1,0 +1,51 @@
+{
+  "name": "Claude Code Sandbox",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "TZ": "${localEnv:TZ:Europe/London}",
+      "CLAUDE_CODE_VERSION": "${localEnv:CLAUDE_CODE_VERSION:latest}",
+      "CUDA_VERSION": "${localEnv:CLAUDE_DEV_CUDA}",
+      "GIT_DELTA_VERSION": "0.18.2",
+      "ZSH_IN_DOCKER_VERSION": "1.2.0"
+    }
+  },
+  "hostRequirements": {
+    "gpu": "optional"
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW"
+  ],
+  "remoteUser": "node",
+  "mounts": [
+    "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
+    "source=hf-cache-${devcontainerId},target=/home/node/.cache/huggingface,type=volume",
+    "source=${localEnv:HOME}/data/${localWorkspaceFolderBasename},target=/data,type=bind,readonly",
+    "source=${localEnv:HOME}/.config/claude-dev/shared,target=/run/secrets/shared,type=bind,readonly",
+    "source=${localEnv:HOME}/.config/claude-dev/repos/${localWorkspaceFolderBasename},target=/run/secrets/repo,type=bind,readonly"
+  ],
+  "containerEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+    "HF_TOKEN_PATH": "/run/secrets/shared/hf-token",
+    "NETRC": "/run/secrets/shared/netrc",
+    "GIT_AUTHOR_NAME": "Claude (agent)",
+    "GIT_AUTHOR_EMAIL": "24585670+willis-richard@users.noreply.github.com",
+    "GIT_COMMITTER_NAME": "Claude (agent)",
+    "GIT_COMMITTER_EMAIL": "24585670+willis-richard@users.noreply.github.com",
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "credential.https://github.com.helper",
+    "GIT_CONFIG_VALUE_0": "!f() { test \"$1\" = get && echo username=x-access-token && echo password=$(cat /run/secrets/repo/gh-token); }; f",
+    "GIT_CONFIG_KEY_1": "branch.autoSetupMerge",
+    "GIT_CONFIG_VALUE_1": "false"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "postStartCommand": "/usr/local/bin/post-start.sh",
+  "waitFor": "postStartCommand"
+}

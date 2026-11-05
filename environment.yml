@@ -1,0 +1,27 @@
+# The project's conda env. The dev container builds it into the image as env `dev`; the name
+# below is for a host env: conda env create -f environment.yml
+# Hand-maintained: never paste `conda env export` output here (its builds are platform-specific).
+# This file owns every dependency; pyproject.toml lists none.
+name: myproject
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
+  - setuptools         # build backend for the editable install
+  # --- project ---
+  # - numpy
+  # - pytorch          # unpinned: CPU build on the laptop, CUDA build on the GPU server
+  # - pandas
+  # - pandas-stubs     # with pandas, so pyright understands it
+  # --- dev tools ---
+  - pytest
+  - pyright
+  - yapf
+  - isort
+  - autoflake
+  - debugpy            # for dap-mode / remote attach
+  # --- PyPI only ---
+  # - pip:
+  #     - some-package

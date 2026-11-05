@@ -1,0 +1,18 @@
+# Personal shell setup, sourced from ~/.zshrc and ~/.bashrc (works in both).
+# Secrets are not handled here: see containerEnv in devcontainer.json.
+set -o vi
+
+# '*_cache' is quoted: zsh aborts on an unmatched glob, bash passes it through.
+alias g="grep -r --colour=auto --exclude-dir=__pycache__ --exclude-dir='*_cache' --exclude-dir=.git"
+alias gi="grep -ir --colour=auto --exclude-dir=__pycache__ --exclude-dir='*_cache' --exclude-dir=.git"
+alias gd='git diff'
+alias gds='git diff --staged'
+alias gdt='git difftool -t vimdiff'
+alias gm='git mergetool'
+alias gp='git pull'
+alias l='less'
+alias lr='less -r'
+alias p='python'
+alias pd='python -m pdb'
+alias v='vim -p'
+alias vd='vimdiff'
